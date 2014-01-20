@@ -223,7 +223,7 @@ function FiniteFuel:Render()
 				restartTimer = true
 				
 				-- Vehicle close enough to the fuel station, tank is not full, and standing still
-				if distance < self.gasStationRefuelRadius and velocity < 0.01 and self.currentVehicleFuel < self.currentVehicleTankSize then
+				if distance < self.gasStationRefuelRadius and velocity < 0.1 and self.currentVehicleFuel < self.currentVehicleTankSize then
 					refuelling = true
 				
 					-- Fuel up vehicle
