@@ -20,8 +20,9 @@ function FiniteFuel:__init()
 	Events:Subscribe("PostTick", self, self.PostTick)
 end
 
-function FiniteFuel:GetTankSize(vehicleModelId)
-	local tankSize = self.defaultTankSize
+function FiniteFuel:GetTankSize(vehicle)
+	local vehicleModelId = vehicle:GetModelId()
+	local tankSize = vehicle:GetMass() / 2
 	if self.tankSizes[vehicleModelId] ~= nil then tankSize = self.tankSizes[vehicleModelId] end
 	return tankSize
 end
@@ -31,7 +32,7 @@ function FiniteFuel:GetCurrentFuelAndTankSize(vehicle)
 	if not IsValid(vehicle) then return end
 	
 	-- Get tank size
-	local tankSize = self:GetTankSize(vehicle:GetModelId())
+	local tankSize = self:GetTankSize(vehicle)
 	
 	-- See if the vehicle is in the fuel array
 	local savedFuel = nil

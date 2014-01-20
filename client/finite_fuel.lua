@@ -3,19 +3,27 @@ class "FiniteFuel"
 function FiniteFuel:__init()
 	-- Get gas stations array
 	self.gasStations = FiniteFuelGasStations()
-	self.gasStationRadius = 100
+	self.gasStationMarkerRadius = 100
 	self.gasStationColor = Color(0, 255, 0, 100)
+	self.gasStationMarkerColor = Color(0, 255, 0)
 	self.gasStationRefuelRadius = 10
+	
+	-- Closest gas station to render on minimap, and marker
+	self.closestGasStation = { distance = 9999999999, position = Vector3(0, 0, 0) }
 
 	-- Timeout timer, timeout and amount to decrease fuel by after the timeout
 	self.timeoutTimer = Timer()
 	self.timeoutDuration = 100
-	self.fuelDecrease = 0.1
 	
 	-- Timer for refuel
 	self.refuelTimer = Timer()
 	self.refuelTimeout = 500
-	self.refuelRate = 4
+	self.refuelRate = 8
+	self.idleVelocity = 0.1
+	
+	-- Tick update timer
+	self.tickUpdateTimer = Timer()
+	self.tickUpdateTimeout = 100
 
 	-- Fuel related vehicle actions
 	self.vehicleActions = {
@@ -33,6 +41,9 @@ function FiniteFuel:__init()
 	self.currentVehicle = nil
 	self.currentVehicleFuel = 0
 	self.currentVehicleTankSize = 0
+	self.currentVehicleIdleDecrease = 0.01
+	
+	self.currentVehicleFuelDecrease = 0.1
 	
 	-- Fuel indicator position
 	self.fuelMeterPosition = "BottomCenter" -- Options: BottomLeft, BottomRight, BottomCenter, TopRight, TopCenter
@@ -124,6 +135,8 @@ function FiniteFuel:LocalPlayerEnterVehicle(args)
 	self.currentVehicle = vehicle
 	self.currentVehicleFuel = 0
 	self.currentVehicleTankSize = 0
+	self.currentVehicleFuelDecrease = vehicle:GetMass() * 0.00005
+	self.currentVehicleIdleDecrease = vehicle:GetMass() * 0.00001
 	
 	-- Request server for current vehicle fuel
 	Network:Send("FiniteFuelGetFuel", vehicle)
@@ -144,25 +157,31 @@ end
 
 function FiniteFuel:LocalPlayerInput(args)
 	-- If no current vehicle id set, player not currently in vehicle, current vehicle not valid, or not in "InVehicle" state, don't handle
-	if self.currentVehicle == nil or not LocalPlayer:InVehicle() or LocalPlayer:GetState() ~= PlayerState.InVehicle or not IsValid(LocalPlayer:GetVehicle()) then return end
+	if self.currentVehicle == nil or not IsValid(self.currentVehicle) or not LocalPlayer:InVehicle() or LocalPlayer:GetState() ~= PlayerState.InVehicle or not IsValid(LocalPlayer:GetVehicle()) then return end
 	--Chat:Print("a", Color(255, 0, 0))
 
 	-- Get action argument
 	local action = args.input
 	
-	-- If action is not in target actions, don't handle
-	if not self.vehicleActions[action] then return end
-	--Chat:Print("c", Color(255, 0, 0))
-	
 	-- If fuel <= 0, ignore the action
 	if self.currentVehicleFuel <= 0 then return false end
 	
-	-- Check if timeout elapsed
-	if self.currentVehicle ~= nil and self.timeoutTimer:GetMilliseconds() < self.timeoutDuration then return end
-	self.timeoutTimer:Restart()
-	
-	-- Decrease fuel
-	self.currentVehicleFuel = self.currentVehicleFuel - self.fuelDecrease
+	-- Check if we are watching for this action
+	if self.vehicleActions[action] then
+		-- Check if timeout elapsed
+		if self.timeoutTimer:GetMilliseconds() < self.timeoutDuration then return end
+		self.timeoutTimer:Restart()
+		
+		self.currentVehicleFuel = self.currentVehicleFuel - self.currentVehicleFuelDecrease
+	elseif self.currentVehicle:GetLinearVelocity():Length() <= self.idleVelocity then -- Vehicle idle
+		-- Check if timeout elapsed
+		if self.timeoutTimer:GetMilliseconds() < self.timeoutDuration then return end
+		self.timeoutTimer:Restart()
+		
+		self.currentVehicleFuel = self.currentVehicleFuel - self.currentVehicleIdleDecrease
+	end
+		
+	-- Make sure fuel doesn not go < 0
 	if self.currentVehicleFuel < 0 then self.currentVehicleFuel = 0 end
 end
 
@@ -184,21 +203,28 @@ end
 
 function FiniteFuel:PreTick()
 	-- Check if vehicle ID and tank size are valid and if the GUI state is game, if not, exit function
-	if self.currentVehicle == nil or not IsValid(self.currentVehicle) or self.currentVehicleTankSize == 0 or Game:GetState() ~= GUIState.Game then return end
+	if self.currentVehicle == nil or not IsValid(self.currentVehicle) or self.currentVehicleTankSize == 0 or Game:GetState() ~= GUIState.Game or self.tickUpdateTimer:GetMilliseconds() < self.tickUpdateTimeout then return end
+	self.tickUpdateTimer:Restart()
 	
 	-- Calculate fuel indicator position
 	self.fuelMeterIndicatorWidth = self.fuelMeterWidth / self.currentVehicleTankSize * self.currentVehicleFuel
+		
+	--[[self.gasStationMarkers = {}
+	for index, position in ipairs(self.gasStations) do
+		local distance = Vector3.Distance(playerPosition, position)
+		
+		-- Check if distance closer than closest gas station
+		if distance < self.closestGasStation.distance then self.closestGasStation = { distance = distance, position = position } end
+		
+		-- Check if distance low enough to render marker
+		if distance < self.gasStationMarkerRadius then
+		end
+	end]]
 end
 
 function FiniteFuel:Render()
 	-- Check if vehicle ID and tank size are valid and if the GUI state is game, if not, exit function
-	if self.currentVehicle == nil or not IsValid(self.currentVehicle) or self.currentVehicleTankSize == 0 or Game:GetState() ~= GUIState.Game then return end
-	
-	-- Draw background
-	Render:FillArea(Vector2(self.fuelMeterLeft, self.fuelMeterTop), Vector2(self.fuelMeterWidth, self.fuelMeterHeight), self.fuelMeterBackground)
-	
-	-- Draw indicator
-	Render:FillArea(Vector2(self.fuelMeterLeft, self.fuelMeterTop), Vector2(self.fuelMeterIndicatorWidth, self.fuelMeterHeight), self.fuelMeterForeground)
+	if self.currentVehicle == nil or not IsValid(self.currentVehicle) or self.currentVehicleTankSize == 0 then return end
 	
 	-- If close to gas station, draw ellipse to indicate refueling station
 	local playerPosition = LocalPlayer:GetPosition()
@@ -206,7 +232,11 @@ function FiniteFuel:Render()
 	local refuelling = false
 	for index, position in ipairs(self.gasStations) do
 		local distance = Vector3.Distance(playerPosition, position)
-		if distance < self.gasStationRadius then
+		
+		if distance < Vector3.Distance(self.closestGasStation.position, playerPosition) and position ~= self.closestGasStation.position then self.closestGasStation = { distance = distance, position = position } end
+		
+		if distance < self.gasStationMarkerRadius then
+		
 			local pos1 = position
 			local pos2 = position + (Vector3(-1, 2, 0) * (distance / 20))
 			local pos3 = position + (Vector3(1, 2, 0) * (distance / 20))
@@ -223,7 +253,7 @@ function FiniteFuel:Render()
 				restartTimer = true
 				
 				-- Vehicle close enough to the fuel station, tank is not full, and standing still
-				if distance < self.gasStationRefuelRadius and velocity < 0.1 and self.currentVehicleFuel < self.currentVehicleTankSize then
+				if distance < self.gasStationRefuelRadius and velocity < self.idleVelocity and self.currentVehicleFuel < self.currentVehicleTankSize then
 					refuelling = true
 				
 					-- Fuel up vehicle
@@ -235,9 +265,9 @@ function FiniteFuel:Render()
 	end
 	
 	-- Only do if the timer has just ticked
-	if restartTimer then
-		if refuelling and self.fuelMeterText ~= "Refuelling" then
-			self.fuelMeterText = "Refuelling"
+	if restartTimer then		
+		if refuelling and self.fuelMeterText ~= "Refuelling..." then
+			self.fuelMeterText = "Refuelling..."
 			self:CalculateTextPosition()
 		elseif not refuelling and self.fuelMeterText ~= "Fuel" then
 			self.fuelMeterText = "Fuel"
@@ -247,8 +277,20 @@ function FiniteFuel:Render()
 	
 	if restartTimer then self.refuelTimer:Restart() end
 	
+	-- Don't render if not in game
+	if Game:GetState() ~= GUIState.Game then return end
+	
+	-- Draw background
+	Render:FillArea(Vector2(self.fuelMeterLeft, self.fuelMeterTop), Vector2(self.fuelMeterWidth, self.fuelMeterHeight), self.fuelMeterBackground)
+	
+	-- Draw indicator
+	Render:FillArea(Vector2(self.fuelMeterLeft, self.fuelMeterTop), Vector2(self.fuelMeterIndicatorWidth, self.fuelMeterHeight), self.fuelMeterForeground)
+	
 	-- Draw text
 	Render:DrawText(Vector2(self.fuelMeterTextLeft, self.fuelMeterTextTop), self.fuelMeterText, self.fuelMeterTextColor, self.fuelMeterTextSize)
+	
+	-- Draw closest gas station on minimap
+	if self.closestGasStation.position ~= nil then Render:FillArea(Render:WorldToMinimap(self.closestGasStation.position), Vector2(10, 10), self.gasStationMarkerColor) end
 end
 
 -- Initialize when module is fully loaded
