@@ -163,17 +163,17 @@ function FiniteFuel:LocalPlayerInput(args)
 	-- Get action argument
 	local action = args.input
 	
-	-- If fuel <= 0, ignore the action
-	if self.currentVehicleFuel <= 0 then return false end
-	
 	-- Check if we are watching for this action
 	if self.vehicleActions[action] then
+		-- If fuel <= 0, ignore the action
+		if self.currentVehicleFuel <= 0 then return false end
+	
 		-- Check if timeout elapsed
 		if self.timeoutTimer:GetMilliseconds() < self.timeoutDuration then return end
 		self.timeoutTimer:Restart()
 		
 		self.currentVehicleFuel = self.currentVehicleFuel - self.currentVehicleFuelDecrease
-	elseif self.currentVehicle:GetLinearVelocity():Length() <= self.idleVelocity then -- Vehicle idle
+	elseif self.currentVehicle:GetLinearVelocity():Length() <= self.idleVelocity then -- Vehicle idle		
 		-- Check if timeout elapsed
 		if self.timeoutTimer:GetMilliseconds() < self.timeoutDuration then return end
 		self.timeoutTimer:Restart()
