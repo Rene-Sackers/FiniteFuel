@@ -12,7 +12,7 @@ function FiniteFuel:__init()
 	self.gasStationRefuelRadius = 10
 	self.gasStationRefuelMaxVelocity = 0.4
 	
-	self.externalRefuel = true -- Set this to true if you want to control refuel with an external script
+	self.externalRefuel = false -- Set this to true if you want to control refuel with an external script
 
 	-- Variables
 	self.currentVehicle = nil
@@ -43,7 +43,6 @@ function FiniteFuel:__init()
 	
 	self.gasStationMarkerPositions = {}
 	self.gasStationClosest = {position = nil, distance = nil}
-	self.sentAtGasStation = nil
 	
 	self:CalculateMeterPosition({size = Vector2(Render.Width, Render.Height)})
 	
@@ -149,13 +148,6 @@ function FiniteFuel:LocalPlayerExitVehicle(args)
 	
 	Network:Send("FiniteFuelSetFuel", {vehicle = args.vehicle, fuel = self.currentVehicle.fuel})
 	
-	-- Notify external scripts of fuel station exit
-	if self.externalRefuel and self.sentAtGasStation ~= nil then
-		self.sentAtGasStation = nil
-		Events:Fire("FiniteFuelExitedGasStation", self.currentVehicle.vehicle)
-		Chat:Print("exited", Color(255, 0, 0))
-	end
-	
 	self.currentVehicle = nil
 end
 
@@ -197,24 +189,15 @@ function FiniteFuel:PostTick()
 	local velocity = self.currentVehicle.vehicle:GetLinearVelocity():Length()
 	local idling = velocity <= self.gasStationRefuelMaxVelocity
 	
-	if self.gasStationClosest.distance ~= nil and self.gasStationClosest.distance <= self.gasStationRefuelRadius and idling and self.currentVehicle.fuel < self.currentVehicle.tankSize then
-		if not self.externalRefuel then
-			-- Fuel up. Set to tank size if full
-			self.currentVehicle.fuel = self.currentVehicle.fuel + self.refuelRate
-			if self.currentVehicle.fuel > self.currentVehicle.tankSize then self.currentVehicle.fuel = self.currentVehicle.tankSize end
-			
-			-- Change text
-			if self.fuelMeterText ~= "Refuelling..." then
-				self.fuelMeterText = "Refuelling..."
-				self:CalculateTextPosition()
-			end
-		else
-			-- Send network event for external refuelling scripts
-			if self.sentAtGasStation ~= self.gasStationClosest.position then
-				self.sentAtGasStation = self.gasStationClosest.position
-				Events:Fire("FiniteFuelEnteredGasStation", self.currentVehicle.vehicle)
-				Chat:Print("entered", Color(255, 0, 0))
-			end
+	if not self.externalRefuel and self.gasStationClosest.distance ~= nil and self.gasStationClosest.distance <= self.gasStationRefuelRadius and idling and self.currentVehicle.fuel < self.currentVehicle.tankSize then
+		-- Fuel up. Set to tank size if full
+		self.currentVehicle.fuel = self.currentVehicle.fuel + self.refuelRate
+		if self.currentVehicle.fuel > self.currentVehicle.tankSize then self.currentVehicle.fuel = self.currentVehicle.tankSize end
+		
+		-- Change text
+		if self.fuelMeterText ~= "Refuelling..." then
+			self.fuelMeterText = "Refuelling..."
+			self:CalculateTextPosition()
 		end
 	elseif idling and self.currentVehicle.fuel > 0 then -- Idling
 		-- Drain idle. Set tank to 0 if less than empty
@@ -237,13 +220,6 @@ function FiniteFuel:PostTick()
 			self.fuelMeterText = "Fuel"
 			self:CalculateTextPosition()
 		end
-	end
-	
-	-- Send left gas station to external scripts
-	if self.externalRefuel and self.sentAtGasStation ~= nil and self.gasStationClosest.distance > self.gasStationRefuelRadius then
-		self.sentAtGasStation = nil
-		Events:Fire("FiniteFuelExitedGasStation", self.currentVehicle.vehicle)
-		Chat:Print("exited", Color(255, 0, 0))
 	end
 	
 	-- Calculate indicator width
