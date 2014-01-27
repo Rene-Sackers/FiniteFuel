@@ -12,7 +12,7 @@ function FiniteFuel:__init()
 	self.gasStationRefuelRadius = 10
 	self.gasStationRefuelMaxVelocity = 0.4
 	
-	self.externalRefuel = true -- Set this to true if you want to control refuel with an external script
+	self.externalRefuel = false -- Set this to true if you want to control refuel with an external script
 
 	-- Variables
 	self.currentVehicle = nil
