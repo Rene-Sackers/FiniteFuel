@@ -16,10 +16,6 @@ function table.SetValue(targetTable, object, newValue)
 	targetTable[object] = newValue
 end
 
-for player in Server:GetPlayers() do
-	player:SetMoney(50)
-end
-
 class "FiniteFuel"
 
 function FiniteFuel:__init()
