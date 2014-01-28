@@ -1,23 +1,31 @@
+-- math.round function
+function math.round(number, decimals)
+	local multiply = 10 ^ (decimals or 0)
+	return math.floor(number * multiply + 0.5) / multiply
+end
+
 class "FiniteFuel"
 
 function FiniteFuel:__init()
 	-- Configurable
 	self.gasStationMinimapIcon = true -- Square on the minimap showing closest fuel station
-	self.gasStationMinimapColor = Color(0, 255, 0)
+	self.gasStationMinimapColor = Color(0, 255, 0) -- The color of the minimap square
 	
 	self.gasStationMarker = true -- 3D markers that show up at the gas station itself
-	self.gasStationMarkerVisibleRadius = 100
-	self.gasStationMarkerColor = Color(0, 255, 0, 100)
+	self.gasStationMarkerVisibleRadius = 100 -- The radius in which the 3D marker will be visible
+	self.gasStationMarkerColor = Color(0, 255, 0, 100) -- The color of the 3D marker
 	
-	self.gasStationRefuelRadius = 10
-	self.gasStationRefuelMaxVelocity = 0.4
+	self.gasStationRefuelRadius = 10 -- The radius from the center of the gas station that you can refuel within
+	self.gasStationRefuelMaxVelocity = 0.4 -- The maximum velocity you can have while refueling
 	
 	self.externalRefuel = false -- Set this to true if you want to control refuel with an external script
+	self.refuelRate = 35 -- The amount of fuel to refuel every 500 milliseconds, if at a gas station, and externalRefuel = false
+	
+	self.enterVehicleFuelMessage = true -- Show message with current vehicle's fuel when entering one
+	self.enterVehicleMessageColor = Color(255, 0, 0)
 
 	-- Variables
 	self.currentVehicle = nil
-	
-	self.refuelRate = 35
 	
 	self.tickTimer = Timer()
 	self.tickTimeout = 500
@@ -41,8 +49,7 @@ function FiniteFuel:__init()
 	self.fuelMeterTextSize = 0
 	self.fuelMeterText = "Fuel"
 	
-	self.gasStationMarkerPositions = {}
-	self.gasStationClosest = {position = nil, distance = nil}
+	self.gasStationClosest = {gasStation = nil, distance = nil}
 	self.sentAtGasStation = nil
 	
 	self:CalculateMeterPosition({size = Vector2(Render.Width, Render.Height)})
@@ -55,6 +62,10 @@ function FiniteFuel:__init()
 	Events:Subscribe("PostTick", self, self.PostTick)
 	Events:Subscribe("ResolutionChange", self, self.CalculateMeterPosition)
 	Events:Subscribe("Render", self, self.Render)
+	
+	-- Custom events
+	Events:Subscribe("FiniteFuelGetFuel", self, self.LocalGetFuel)
+	Events:Subscribe("FiniteFuelSetFuel", self, self.LocalSetFuel)
 	
 	-- Networked events
 	Network:Subscribe("FiniteFuelGetFuel", self, self.GetFuel)
@@ -120,11 +131,11 @@ function FiniteFuel:Render(args)
 	Render:DrawText(Vector2(self.fuelMeterTextLeft, self.fuelMeterTextTop), self.fuelMeterText, self.fuelMeterTextColor, self.fuelMeterTextSize)
 	
 	-- Draw closest gas station on minimap
-	if self.gasStationMinimapIcon and self.gasStationClosest.position ~= nil then Render:FillArea(Render:WorldToMinimap(self.gasStationClosest.position), Vector2(10, 10), self.gasStationMinimapColor) end
+	if self.gasStationMinimapIcon and self.gasStationClosest.gasStation ~= nil then Render:FillArea(Render:WorldToMinimap(self.gasStationClosest.gasStation.position), Vector2(10, 10), self.gasStationMinimapColor) end
 	
 	-- Draw gas station marker
-	if self.gasStationMarker and self.gasStationClosest.position ~= nil and self.gasStationClosest.distance <= self.gasStationMarkerVisibleRadius then
-		local position = self.gasStationClosest.position
+	if self.gasStationMarker and self.gasStationClosest.gasStation ~= nil and self.gasStationClosest.distance <= self.gasStationMarkerVisibleRadius then
+		local position = self.gasStationClosest.gasStation.position
 		local distance = self.gasStationClosest.distance
 		local pos1 = position
 		local pos2 = position + (Vector3(-1, 2, 0) * (distance / 20))
@@ -141,19 +152,20 @@ end
 function FiniteFuel:LocalPlayerEnterVehicle(args)
 	if not IsValid(args.vehicle) then return end
 	
+	self.gasStationClosest = {gasStation = nil, distance = nil}
+	
 	Network:Send("FiniteFuelGetFuel", args.vehicle)
 end
 
-function FiniteFuel:LocalPlayerExitVehicle(args)
-	if self.currentVehicle == nil or not IsValid(self.currentVehicle.vehicle) or self.currentVehicle.vehicle ~= args.vehicle then return end
+function FiniteFuel:LocalPlayerExitVehicle(args)	
+	if self.currentVehicle == nil or self.currentVehicle.vehicle ~= args.vehicle then return end
 	
 	Network:Send("FiniteFuelSetFuel", {vehicle = args.vehicle, fuel = self.currentVehicle.fuel})
 	
 	-- Notify external scripts of fuel station exit
 	if self.externalRefuel and self.sentAtGasStation ~= nil then
+		Events:Fire("FiniteFuelExitedGasStation", {vehicle = self.currentVehicle.vehicle, gasStation = self.sentAtGasStation})
 		self.sentAtGasStation = nil
-		Events:Fire("FiniteFuelExitedGasStation", self.currentVehicle.vehicle)
-		Chat:Print("exited", Color(255, 0, 0))
 	end
 	
 	self.currentVehicle = nil
@@ -164,32 +176,28 @@ function FiniteFuel:InputPoll()
 	if self.currentVehicle == nil or
 	not IsValid(self.currentVehicle.vehicle) or
 	self.currentVehicle.fuel > 0 or
-	(self.currentVehicle.vehicleType ~= FiniteFuelVehicleTypes.Airplane and self.currentVehicle.vehicleType ~= FiniteFuelVehicleTypes.Helicopter) then return end
+	(self.currentVehicle.vehicleGasType ~= FiniteFuelGasTypes.Aircraft and self.currentVehicle.vehicleGasType ~= FiniteFuelGasTypes.Aircraft) then return end
 	
 	Input:SetValue(Action.HeliDecAltitude, 1)
 	Input:SetValue(Action.PlaneDecTrust, 1)
 end
 
 function FiniteFuel:PostTick()
-
 	if self.tickTimer:GetMilliseconds() < self.tickTimeout or self.currentVehicle == nil or not IsValid(self.currentVehicle.vehicle) then return end
 	self.tickTimer:Restart()
 	
 	local playerPosition = LocalPlayer:GetPosition()
-	self.gasStationMarkerPositions = {}
-	if self.gasStationClosest.position ~= nil then self.gasStationClosest.distance = Vector3.Distance(self.gasStationClosest.position, playerPosition) end
-	for index, data in ipairs(FiniteFuelGasStations) do
-		local gasStationPosition = data[1]
-		local distance = Vector3.Distance(gasStationPosition, playerPosition)
-		
-		-- Closer than last gas station checked
-		if self.gasStationClosest.distance == nil or distance < self.gasStationClosest.distance then
-			self.gasStationClosest = {position = data[1], distance = distance}
-		end
-		
-		-- Close enough to draw marker
-		if distance <= self.gasStationMarkerVisibleRadius then
-			table.insert(self.gasStationMarkerPositions, gasStationPosition)
+	if self.gasStationClosest.gasStation ~= nil then self.gasStationClosest.distance = Vector3.Distance(self.gasStationClosest.gasStation.position, playerPosition) end
+	for index, gasStation in ipairs(FiniteFuelGasStations) do
+		-- Only evaluate if of same gas type
+		if gasStation.gasType == self.currentVehicle.vehicleGasType then
+			local gasStationPosition = gasStation.position
+			local distance = Vector3.Distance(gasStationPosition, playerPosition)
+			
+			-- Closer than last gas station checked
+			if self.gasStationClosest.distance == nil or distance < self.gasStationClosest.distance then
+				self.gasStationClosest = {gasStation = gasStation, distance = distance}
+			end
 		end
 	end
 	
@@ -210,10 +218,9 @@ function FiniteFuel:PostTick()
 			end
 		else
 			-- Send network event for external refuelling scripts
-			if self.sentAtGasStation ~= self.gasStationClosest.position then
-				self.sentAtGasStation = self.gasStationClosest.position
-				Events:Fire("FiniteFuelEnteredGasStation", self.currentVehicle.vehicle)
-				Chat:Print("entered", Color(255, 0, 0))
+			if self.sentAtGasStation ~= self.gasStationClosest.gasStation then
+				self.sentAtGasStation = self.gasStationClosest.gasStation
+				Events:Fire("FiniteFuelEnteredGasStation", {vehicle = self.currentVehicle.vehicle, vehicleGasType = self.currentVehicle.vehicleGasType, gasStation = self.gasStationClosest.gasStation})
 			end
 		end
 	elseif idling and self.currentVehicle.fuel > 0 then -- Idling
@@ -241,9 +248,8 @@ function FiniteFuel:PostTick()
 	
 	-- Send left gas station to external scripts
 	if self.externalRefuel and self.sentAtGasStation ~= nil and self.gasStationClosest.distance > self.gasStationRefuelRadius then
+		Events:Fire("FiniteFuelExitedGasStation", {vehicle = self.currentVehicle.vehicle, gasStation = self.sentAtGasStation})
 		self.sentAtGasStation = nil
-		Events:Fire("FiniteFuelExitedGasStation", self.currentVehicle.vehicle)
-		Chat:Print("exited", Color(255, 0, 0))
 	end
 	
 	-- Calculate indicator width
@@ -264,6 +270,24 @@ function FiniteFuel:GetFuel(args)
 	local fuel = args.fuel
 	
 	self.currentVehicle = FiniteFuelVehicle(vehicle, fuel)
+	if self.enterVehicleFuelMessage then
+		Chat:Print("Vehicle currently has " .. math.round(self.currentVehicle.fuel) .. "/" .. math.round(self.currentVehicle.tankSize) .. " fuel.", self.enterVehicleMessageColor)
+	end
+end
+
+-- ======================== Local events ========================
+function FiniteFuel:LocalGetFuel()
+	if self.currentVehicle == nil or not IsValid(self.currentVehicle.vehicle) then return end
+	
+	Events:Fire("FiniteFuelReturnGetFuel", {vehicle = self.currentVehicle.vehicle, vehicleGasType = self.currentVehicle.vehicleGasType, fuel = self.currentVehicle.fuel, tankSize = self.currentVehicle.tankSize})
+end
+
+function FiniteFuel:LocalSetFuel(fuel)
+	if fuel < 0 or self.currentVehicle == nil or not IsValid(self.currentVehicle.vehicle) then return end
+	
+	if fuel > self.currentVehicle.tankSize then fuel = self.currentVehicle.tankSize end
+	
+	self.currentVehicle.fuel = fuel
 end
 
 -- ======================== Initialize ========================
